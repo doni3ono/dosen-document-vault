@@ -38,7 +38,12 @@ if not os.path.exists(metadata_file):
 # =========================
 menu = st.sidebar.radio(
     "Menu",
-    ["🏠 Beranda", "📤 Upload Dokumen", "📚 Daftar Dokumen"]
+    [
+        "🏠 Beranda",
+        "📤 Upload Dokumen",
+        "🔎 Cari Dokumen",
+        "📚 Daftar Dokumen"
+    ]
 )
 
 # =========================
@@ -72,9 +77,7 @@ elif menu == "📤 Upload Dokumen":
 
     st.subheader("📤 Upload Dokumen Baru")
 
-    judul = st.text_input(
-        "Judul Dokumen"
-    )
+    judul = st.text_input("Judul Dokumen")
 
     kategori = st.selectbox(
         "Kategori",
@@ -132,12 +135,8 @@ elif menu == "📤 Upload Dokumen":
         else:
 
             doc_id = str(uuid.uuid4())[:8]
-
             nama_file_asli = uploaded_file.name
-
-            nama_file_simpan = (
-                f"{doc_id}_{nama_file_asli}"
-            )
+            nama_file_simpan = f"{doc_id}_{nama_file_asli}"
 
             path_file = os.path.join(
                 "documents",
@@ -166,14 +165,126 @@ elif menu == "📤 Upload Dokumen":
                 ignore_index=True
             )
 
-            df.to_csv(
-                metadata_file,
-                index=False
-            )
+            df.to_csv(metadata_file, index=False)
 
-            st.success(
-                "✅ Dokumen berhasil disimpan."
-            )
+            st.success("✅ Dokumen berhasil disimpan.")
+
+# =========================
+# CARI DOKUMEN
+# =========================
+elif menu == "🔎 Cari Dokumen":
+
+    st.subheader("🔎 Cari Dokumen")
+
+    df = pd.read_csv(metadata_file)
+
+    if len(df) == 0:
+
+        st.info("Belum ada dokumen yang disimpan.")
+
+    else:
+
+        pencarian = st.text_input(
+            "Cari berdasarkan judul atau kata kunci",
+            placeholder="contoh: MAPPI, BKD, penelitian rumah"
+        )
+
+        kategori_filter = st.selectbox(
+            "Filter Kategori",
+            ["Semua"] + sorted(df["kategori"].dropna().unique().tolist())
+        )
+
+        tahun_list = sorted(
+            df["tahun"].dropna().astype(int).unique().tolist(),
+            reverse=True
+        )
+
+        tahun_filter = st.selectbox(
+            "Filter Tahun",
+            ["Semua"] + tahun_list
+        )
+
+        hasil = df.copy()
+
+        if pencarian:
+
+            pencarian_lower = pencarian.lower()
+
+            hasil = hasil[
+                hasil["judul"].fillna("").str.lower().str.contains(
+                    pencarian_lower,
+                    regex=False
+                )
+                |
+                hasil["kata_kunci"].fillna("").str.lower().str.contains(
+                    pencarian_lower,
+                    regex=False
+                )
+            ]
+
+        if kategori_filter != "Semua":
+            hasil = hasil[
+                hasil["kategori"] == kategori_filter
+            ]
+
+        if tahun_filter != "Semua":
+            hasil = hasil[
+                hasil["tahun"].astype(int) == int(tahun_filter)
+            ]
+
+        st.write(f"**Ditemukan {len(hasil)} dokumen**")
+
+        if len(hasil) == 0:
+
+            st.warning("Dokumen tidak ditemukan.")
+
+        else:
+
+            for _, row in hasil.iterrows():
+
+                with st.expander(
+                    f"📄 {row['judul']} — {row['tahun']}"
+                ):
+
+                    st.write(
+                        "**Kategori:**",
+                        row["kategori"]
+                    )
+
+                    st.write(
+                        "**Kata Kunci:**",
+                        row["kata_kunci"]
+                    )
+
+                    st.write(
+                        "**Tanggal Upload:**",
+                        row["tanggal_upload"]
+                    )
+
+                    path_file = os.path.join(
+                        "documents",
+                        row["nama_file"]
+                    )
+
+                    if os.path.exists(path_file):
+
+                        with open(path_file, "rb") as f:
+
+                            st.download_button(
+                                "⬇️ Download Dokumen",
+                                data=f.read(),
+                                file_name=row["nama_file"].split(
+                                    "_",
+                                    1
+                                )[-1],
+                                key=f"download_{row['id']}"
+                            )
+
+                    else:
+
+                        st.error(
+                            "File tidak ditemukan di penyimpanan."
+                        )
 
 # =========================
 # DAFTAR DOKUMEN
@@ -186,9 +297,7 @@ elif menu == "📚 Daftar Dokumen":
 
     if len(df) == 0:
 
-        st.info(
-            "Belum ada dokumen yang disimpan."
-        )
+        st.info("Belum ada dokumen yang disimpan.")
 
     else:
 
