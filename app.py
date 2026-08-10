@@ -5,6 +5,11 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+import secrets
+import hashlib
+import base64
+
+
 # =========================================================
 # PAGE CONFIG
 # =========================================================
@@ -14,6 +19,7 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
+
 
 # =========================================================
 # SECRETS
@@ -32,6 +38,7 @@ GOOGLE_DRIVE_FOLDER_ID = st.secrets.get(
     ""
 )
 
+
 # =========================================================
 # SUPABASE
 # =========================================================
@@ -41,8 +48,9 @@ supabase = create_client(
     SUPABASE_SECRET_KEY
 )
 
+
 # =========================================================
-# GOOGLE OAUTH CONFIG
+# GOOGLE OAUTH
 # =========================================================
 
 SCOPES = [
@@ -50,7 +58,7 @@ SCOPES = [
 ]
 
 
-def create_google_flow():
+def create_google_flow(code_verifier=None):
 
     client_config = {
         "web": {
@@ -67,8 +75,25 @@ def create_google_flow():
     return Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        redirect_uri=GOOGLE_REDIRECT_URI
+        redirect_uri=GOOGLE_REDIRECT_URI,
+        code_verifier=code_verifier
     )
+
+
+def generate_code_verifier():
+
+    return secrets.token_urlsafe(64)
+
+
+def generate_code_challenge(verifier):
+
+    digest = hashlib.sha256(
+        verifier.encode("ascii")
+    ).digest()
+
+    return base64.urlsafe_b64encode(
+        digest
+    ).decode("ascii").rstrip("=")
 
 
 # =========================================================
@@ -81,10 +106,12 @@ if "logged_in" not in st.session_state:
 if "google_credentials" not in st.session_state:
     st.session_state.google_credentials = None
 
+if "google_code_verifier" not in st.session_state:
+    st.session_state.google_code_verifier = None
+
 
 # =========================================================
-# GOOGLE OAUTH CALLBACK
-# IMPORTANT: handle callback BEFORE app login screen
+# GOOGLE CALLBACK
 # =========================================================
 
 if "code" in st.query_params:
@@ -93,10 +120,28 @@ if "code" in st.query_params:
 
         code = st.query_params.get("code")
 
-        flow = create_google_flow()
+        code_verifier = st.session_state.get(
+            "google_code_verifier"
+        )
+
+        if not code_verifier:
+
+            st.error(
+                "Code verifier OAuth tidak ditemukan. "
+                "Silakan ulangi koneksi Google Drive."
+            )
+
+            st.query_params.clear()
+
+            st.stop()
+
+        flow = create_google_flow(
+            code_verifier=code_verifier
+        )
 
         flow.fetch_token(
-            code=code
+            code=code,
+            code_verifier=code_verifier
         )
 
         credentials = flow.credentials
@@ -110,7 +155,7 @@ if "code" in st.query_params:
             "scopes": credentials.scopes,
         }
 
-        # OAuth callback means user was already using the app
+        st.session_state.google_code_verifier = None
         st.session_state.logged_in = True
 
         st.query_params.clear()
@@ -156,6 +201,7 @@ if not st.session_state.logged_in:
         if password == APP_PASSWORD:
 
             st.session_state.logged_in = True
+
             st.rerun()
 
         else:
@@ -192,6 +238,7 @@ if st.sidebar.button(
 
     st.session_state.logged_in = False
     st.session_state.google_credentials = None
+    st.session_state.google_code_verifier = None
 
     st.rerun()
 
@@ -287,12 +334,30 @@ elif menu == "☁️ Google Drive":
             "Google Drive belum terhubung."
         )
 
-        flow = create_google_flow()
+        # ---------------------------------------------
+        # PKCE
+        # ---------------------------------------------
+
+        code_verifier = generate_code_verifier()
+
+        code_challenge = generate_code_challenge(
+            code_verifier
+        )
+
+        st.session_state.google_code_verifier = (
+            code_verifier
+        )
+
+        flow = create_google_flow(
+            code_verifier=code_verifier
+        )
 
         authorization_url, state = (
             flow.authorization_url(
                 access_type="offline",
-                prompt="consent"
+                prompt="consent",
+                code_challenge=code_challenge,
+                code_challenge_method="S256"
             )
         )
 
@@ -378,9 +443,8 @@ elif menu == "☁️ Google Drive":
 
                     st.warning(
                         "Google Drive sudah terhubung, "
-                        "tetapi folder yang dibuat manual "
-                        "belum dapat diakses dengan izin "
-                        "drive.file."
+                        "tetapi folder belum dapat "
+                        "diakses dengan scope drive.file."
                     )
 
                     st.caption(
