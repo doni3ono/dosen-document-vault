@@ -5,11 +5,8 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-import os
-
-
 # =========================================================
-# CONFIG
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
@@ -17,6 +14,10 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
+
+# =========================================================
+# SECRETS
+# =========================================================
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_SECRET_KEY = st.secrets["SUPABASE_SECRET_KEY"]
@@ -26,16 +27,22 @@ GOOGLE_CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
 GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REDIRECT_URI = st.secrets["GOOGLE_REDIRECT_URI"]
 
-GOOGLE_DRIVE_FOLDER_ID = st.secrets["GOOGLE_DRIVE_FOLDER_ID"]
+GOOGLE_DRIVE_FOLDER_ID = st.secrets.get(
+    "GOOGLE_DRIVE_FOLDER_ID",
+    ""
+)
+
+# =========================================================
+# SUPABASE
+# =========================================================
 
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_SECRET_KEY
 )
 
-
 # =========================================================
-# GOOGLE OAUTH
+# GOOGLE OAUTH CONFIG
 # =========================================================
 
 SCOPES = [
@@ -57,17 +64,15 @@ def create_google_flow():
         }
     }
 
-    flow = Flow.from_client_config(
+    return Flow.from_client_config(
         client_config,
         scopes=SCOPES,
         redirect_uri=GOOGLE_REDIRECT_URI
     )
 
-    return flow
-
 
 # =========================================================
-# SESSION
+# SESSION STATE
 # =========================================================
 
 if "logged_in" not in st.session_state:
@@ -78,7 +83,51 @@ if "google_credentials" not in st.session_state:
 
 
 # =========================================================
-# APP LOGIN
+# GOOGLE OAUTH CALLBACK
+# IMPORTANT: handle callback BEFORE app login screen
+# =========================================================
+
+if "code" in st.query_params:
+
+    try:
+
+        code = st.query_params.get("code")
+
+        flow = create_google_flow()
+
+        flow.fetch_token(
+            code=code
+        )
+
+        credentials = flow.credentials
+
+        st.session_state.google_credentials = {
+            "token": credentials.token,
+            "refresh_token": credentials.refresh_token,
+            "token_uri": credentials.token_uri,
+            "client_id": credentials.client_id,
+            "client_secret": credentials.client_secret,
+            "scopes": credentials.scopes,
+        }
+
+        # OAuth callback means user was already using the app
+        st.session_state.logged_in = True
+
+        st.query_params.clear()
+
+        st.rerun()
+
+    except Exception as e:
+
+        st.error(
+            f"Google OAuth gagal: {e}"
+        )
+
+        st.stop()
+
+
+# =========================================================
+# LOGIN
 # =========================================================
 
 if not st.session_state.logged_in:
@@ -89,6 +138,8 @@ if not st.session_state.logged_in:
         "Secure Academic Document Management System"
     )
 
+    st.markdown("---")
+
     st.subheader("🔐 Login")
 
     password = st.text_input(
@@ -98,7 +149,8 @@ if not st.session_state.logged_in:
 
     if st.button(
         "Masuk",
-        type="primary"
+        type="primary",
+        use_container_width=True
     ):
 
         if password == APP_PASSWORD:
@@ -116,79 +168,27 @@ if not st.session_state.logged_in:
 
 
 # =========================================================
-# GOOGLE CALLBACK
-# =========================================================
-
-if "code" in st.query_params:
-
-    try:
-        code = st.query_params.get("code")
-
-        flow = create_google_flow()
-
-        # Penting: gunakan authorization_response lengkap
-        authorization_response = (
-            GOOGLE_REDIRECT_URI
-            + "?code="
-            + code
-        )
-
-        flow.fetch_token(
-            authorization_response=authorization_response
-        )
-
-        credentials = flow.credentials
-
-        st.session_state.google_credentials = {
-            "token": credentials.token,
-            "refresh_token": credentials.refresh_token,
-            "token_uri": credentials.token_uri,
-            "client_id": credentials.client_id,
-            "client_secret": credentials.client_secret,
-            "scopes": credentials.scopes
-        }
-
-        # Bersihkan parameter OAuth setelah credential tersimpan
-        st.query_params.clear()
-
-        st.rerun()
-
-    except Exception as e:
-
-        st.error(
-            f"Google OAuth callback gagal: {e}"
-        )
-
-        st.stop()
-
-
-# =========================================================
-# HEADER
-# =========================================================
-
-st.title("📚 Dosen Document Vault")
-
-st.caption(
-    "Google Drive + Supabase Document Management"
-)
-
-st.markdown("---")
-
-
-# =========================================================
 # SIDEBAR
 # =========================================================
+
+st.sidebar.title(
+    "📚 Document Vault"
+)
 
 menu = st.sidebar.radio(
     "Menu",
     [
         "🏠 Dashboard",
         "☁️ Google Drive",
-        "📚 Data Supabase"
+        "📚 Supabase"
     ]
 )
 
-if st.sidebar.button("🚪 Logout"):
+st.sidebar.markdown("---")
+
+if st.sidebar.button(
+    "🚪 Logout"
+):
 
     st.session_state.logged_in = False
     st.session_state.google_credentials = None
@@ -197,12 +197,29 @@ if st.sidebar.button("🚪 Logout"):
 
 
 # =========================================================
+# HEADER
+# =========================================================
+
+st.title(
+    "📚 Dosen Document Vault"
+)
+
+st.caption(
+    "Google Drive + Supabase"
+)
+
+st.markdown("---")
+
+
+# =========================================================
 # DASHBOARD
 # =========================================================
 
 if menu == "🏠 Dashboard":
 
-    st.subheader("Dashboard")
+    st.subheader(
+        "Dashboard"
+    )
 
     try:
 
@@ -213,17 +230,23 @@ if menu == "🏠 Dashboard":
             .execute()
         )
 
-        total = len(response.data)
+        total_documents = len(
+            response.data
+        )
 
-    except Exception:
+    except Exception as e:
 
-        total = 0
+        total_documents = 0
+
+        st.warning(
+            f"Supabase belum dapat dibaca: {e}"
+        )
 
     col1, col2 = st.columns(2)
 
     col1.metric(
         "📄 Dokumen",
-        total
+        total_documents
     )
 
     if st.session_state.google_credentials:
@@ -240,6 +263,13 @@ if menu == "🏠 Dashboard":
             "Belum terhubung"
         )
 
+    if not st.session_state.google_credentials:
+
+        st.info(
+            "Buka menu Google Drive untuk "
+            "menghubungkan akun Google."
+        )
+
 
 # =========================================================
 # GOOGLE DRIVE
@@ -248,7 +278,7 @@ if menu == "🏠 Dashboard":
 elif menu == "☁️ Google Drive":
 
     st.subheader(
-        "☁️ Koneksi Google Drive"
+        "☁️ Google Drive"
     )
 
     if not st.session_state.google_credentials:
@@ -259,34 +289,37 @@ elif menu == "☁️ Google Drive":
 
         flow = create_google_flow()
 
-        authorization_url, state = flow.authorization_url(
-    access_type="offline",
-    include_granted_scopes="true",
-    prompt="consent"
+        authorization_url, state = (
+            flow.authorization_url(
+                access_type="offline",
+                prompt="consent"
+            )
         )
 
         st.link_button(
             "🔗 Hubungkan Google Drive",
             authorization_url,
-            type="primary"
+            type="primary",
+            use_container_width=True
         )
 
     else:
 
         st.success(
-            "✅ Google Drive sudah terhubung."
-        )
-
-        credentials = Credentials(
-            **st.session_state.google_credentials
+            "✅ Google Drive berhasil terhubung."
         )
 
         try:
 
+            credentials = Credentials(
+                **st.session_state.google_credentials
+            )
+
             drive_service = build(
                 "drive",
                 "v3",
-                credentials=credentials
+                credentials=credentials,
+                cache_discovery=False
             )
 
             about = (
@@ -303,61 +336,61 @@ elif menu == "☁️ Google Drive":
                 {}
             )
 
-            st.write(
-                "Google Drive account:"
+            email = user.get(
+                "emailAddress",
+                ""
             )
 
             st.write(
-                f"**{user.get('emailAddress', '')}**"
+                "### Akun Google"
+            )
+
+            st.success(
+                email
             )
 
             st.markdown("---")
 
-            st.subheader(
-                "📁 Folder Dosen Document Vault"
-            )
-
-            try:
-
-                folder = (
-                    drive_service
-                    .files()
-                    .get(
-                        fileId=GOOGLE_DRIVE_FOLDER_ID,
-                        fields="id,name,mimeType"
-                    )
-                    .execute()
-                )
-
-                st.success(
-                    f"Folder ditemukan: "
-                    f"**{folder['name']}**"
-                )
+            if GOOGLE_DRIVE_FOLDER_ID:
 
                 st.write(
-                    "✅ Aplikasi memiliki akses "
-                    "ke folder Google Drive."
+                    "### 📁 Folder Document Vault"
                 )
 
-            except Exception as e:
+                try:
 
-                st.warning(
-                    "Google Drive sudah terhubung, "
-                    "tetapi folder yang dibuat manual "
-                    "belum dapat diakses."
-                )
+                    folder = (
+                        drive_service
+                        .files()
+                        .get(
+                            fileId=GOOGLE_DRIVE_FOLDER_ID,
+                            fields="id,name,mimeType"
+                        )
+                        .execute()
+                    )
 
-                st.caption(
-                    "Ini bisa terjadi karena kita "
-                    "menggunakan scope drive.file."
-                )
+                    st.success(
+                        f"Folder ditemukan: "
+                        f"{folder.get('name')}"
+                    )
 
-                st.code(str(e))
+                except Exception as folder_error:
+
+                    st.warning(
+                        "Google Drive sudah terhubung, "
+                        "tetapi folder yang dibuat manual "
+                        "belum dapat diakses dengan izin "
+                        "drive.file."
+                    )
+
+                    st.caption(
+                        str(folder_error)
+                    )
 
         except Exception as e:
 
             st.error(
-                f"Koneksi Google Drive gagal: {e}"
+                f"Gagal membaca Google Drive: {e}"
             )
 
 
@@ -365,7 +398,7 @@ elif menu == "☁️ Google Drive":
 # SUPABASE
 # =========================================================
 
-elif menu == "📚 Data Supabase":
+elif menu == "📚 Supabase":
 
     st.subheader(
         "📚 Metadata Supabase"
@@ -377,6 +410,10 @@ elif menu == "📚 Data Supabase":
             supabase
             .table("documents")
             .select("*")
+            .order(
+                "created_at",
+                desc=True
+            )
             .execute()
         )
 
@@ -392,11 +429,11 @@ elif menu == "📚 Data Supabase":
         else:
 
             st.info(
-                "Belum ada metadata dokumen."
+                "Belum ada dokumen."
             )
 
     except Exception as e:
 
         st.error(
-            f"Gagal mengambil data: {e}"
+            f"Gagal mengambil data Supabase: {e}"
         )
