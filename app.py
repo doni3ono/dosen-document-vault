@@ -5,10 +5,6 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-import secrets
-import hashlib
-import base64
-
 
 # =========================================================
 # PAGE CONFIG
@@ -58,7 +54,7 @@ SCOPES = [
 ]
 
 
-def create_google_flow(code_verifier=None):
+def create_google_flow():
 
     client_config = {
         "web": {
@@ -75,25 +71,8 @@ def create_google_flow(code_verifier=None):
     return Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        redirect_uri=GOOGLE_REDIRECT_URI,
-        code_verifier=code_verifier
+        redirect_uri=GOOGLE_REDIRECT_URI
     )
-
-
-def generate_code_verifier():
-
-    return secrets.token_urlsafe(64)
-
-
-def generate_code_challenge(verifier):
-
-    digest = hashlib.sha256(
-        verifier.encode("ascii")
-    ).digest()
-
-    return base64.urlsafe_b64encode(
-        digest
-    ).decode("ascii").rstrip("=")
 
 
 # =========================================================
@@ -106,9 +85,6 @@ if "logged_in" not in st.session_state:
 if "google_credentials" not in st.session_state:
     st.session_state.google_credentials = None
 
-if "google_code_verifier" not in st.session_state:
-    st.session_state.google_code_verifier = None
-
 
 # =========================================================
 # GOOGLE CALLBACK
@@ -120,28 +96,10 @@ if "code" in st.query_params:
 
         code = st.query_params.get("code")
 
-        code_verifier = st.session_state.get(
-            "google_code_verifier"
-        )
-
-        if not code_verifier:
-
-            st.error(
-                "Code verifier OAuth tidak ditemukan. "
-                "Silakan ulangi koneksi Google Drive."
-            )
-
-            st.query_params.clear()
-
-            st.stop()
-
-        flow = create_google_flow(
-            code_verifier=code_verifier
-        )
+        flow = create_google_flow()
 
         flow.fetch_token(
-            code=code,
-            code_verifier=code_verifier
+            code=code
         )
 
         credentials = flow.credentials
@@ -155,7 +113,6 @@ if "code" in st.query_params:
             "scopes": credentials.scopes,
         }
 
-        st.session_state.google_code_verifier = None
         st.session_state.logged_in = True
 
         st.query_params.clear()
@@ -201,7 +158,6 @@ if not st.session_state.logged_in:
         if password == APP_PASSWORD:
 
             st.session_state.logged_in = True
-
             st.rerun()
 
         else:
@@ -238,7 +194,6 @@ if st.sidebar.button(
 
     st.session_state.logged_in = False
     st.session_state.google_credentials = None
-    st.session_state.google_code_verifier = None
 
     st.rerun()
 
@@ -264,9 +219,7 @@ st.markdown("---")
 
 if menu == "🏠 Dashboard":
 
-    st.subheader(
-        "Dashboard"
-    )
+    st.subheader("Dashboard")
 
     try:
 
@@ -310,13 +263,6 @@ if menu == "🏠 Dashboard":
             "Belum terhubung"
         )
 
-    if not st.session_state.google_credentials:
-
-        st.info(
-            "Buka menu Google Drive untuk "
-            "menghubungkan akun Google."
-        )
-
 
 # =========================================================
 # GOOGLE DRIVE
@@ -334,30 +280,13 @@ elif menu == "☁️ Google Drive":
             "Google Drive belum terhubung."
         )
 
-        # ---------------------------------------------
-        # PKCE
-        # ---------------------------------------------
-
-        code_verifier = generate_code_verifier()
-
-        code_challenge = generate_code_challenge(
-            code_verifier
-        )
-
-        st.session_state.google_code_verifier = (
-            code_verifier
-        )
-
-        flow = create_google_flow(
-            code_verifier=code_verifier
-        )
+        flow = create_google_flow()
 
         authorization_url, state = (
             flow.authorization_url(
                 access_type="offline",
                 prompt="consent",
-                code_challenge=code_challenge,
-                code_challenge_method="S256"
+                include_granted_scopes="true"
             )
         )
 
@@ -419,7 +348,7 @@ elif menu == "☁️ Google Drive":
             if GOOGLE_DRIVE_FOLDER_ID:
 
                 st.write(
-                    "### 📁 Folder Document Vault"
+                    "### 📁 Folder Dosen Document Vault"
                 )
 
                 try:
@@ -443,8 +372,7 @@ elif menu == "☁️ Google Drive":
 
                     st.warning(
                         "Google Drive sudah terhubung, "
-                        "tetapi folder belum dapat "
-                        "diakses dengan scope drive.file."
+                        "tetapi folder belum dapat diakses."
                     )
 
                     st.caption(
