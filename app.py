@@ -1,10 +1,8 @@
 import streamlit as st
 from supabase import create_client
-
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-
+from datetime import datetime
+import uuid
+import mimetypes
 
 # =========================================================
 # PAGE CONFIG
@@ -16,7 +14,6 @@ st.set_page_config(
     layout="wide"
 )
 
-
 # =========================================================
 # SECRETS
 # =========================================================
@@ -25,18 +22,10 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_SECRET_KEY = st.secrets["SUPABASE_SECRET_KEY"]
 APP_PASSWORD = st.secrets["APP_PASSWORD"]
 
-GOOGLE_CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
-GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
-GOOGLE_REDIRECT_URI = st.secrets["GOOGLE_REDIRECT_URI"]
-
-GOOGLE_DRIVE_FOLDER_ID = st.secrets.get(
-    "GOOGLE_DRIVE_FOLDER_ID",
-    ""
-)
-
+BUCKET_NAME = "documents"
 
 # =========================================================
-# SUPABASE
+# SUPABASE CONNECTION
 # =========================================================
 
 supabase = create_client(
@@ -44,89 +33,12 @@ supabase = create_client(
     SUPABASE_SECRET_KEY
 )
 
-
 # =========================================================
-# GOOGLE OAUTH
-# =========================================================
-
-SCOPES = [
-    "https://www.googleapis.com/auth/drive.file"
-]
-
-
-def create_google_flow():
-
-    client_config = {
-        "web": {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [
-                GOOGLE_REDIRECT_URI
-            ]
-        }
-    }
-
-    return Flow.from_client_config(
-        client_config,
-        scopes=SCOPES,
-        redirect_uri=GOOGLE_REDIRECT_URI
-    )
-
-
-# =========================================================
-# SESSION STATE
+# SESSION
 # =========================================================
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
-if "google_credentials" not in st.session_state:
-    st.session_state.google_credentials = None
-
-
-# =========================================================
-# GOOGLE CALLBACK
-# =========================================================
-
-if "code" in st.query_params:
-
-    try:
-
-        code = st.query_params.get("code")
-
-        flow = create_google_flow()
-
-        flow.fetch_token(
-            code=code
-        )
-
-        credentials = flow.credentials
-
-        st.session_state.google_credentials = {
-            "token": credentials.token,
-            "refresh_token": credentials.refresh_token,
-            "token_uri": credentials.token_uri,
-            "client_id": credentials.client_id,
-            "client_secret": credentials.client_secret,
-            "scopes": credentials.scopes,
-        }
-
-        st.session_state.logged_in = True
-
-        st.query_params.clear()
-
-        st.rerun()
-
-    except Exception as e:
-
-        st.error(
-            f"Google OAuth gagal: {e}"
-        )
-
-        st.stop()
-
 
 # =========================================================
 # LOGIN
@@ -135,10 +47,7 @@ if "code" in st.query_params:
 if not st.session_state.logged_in:
 
     st.title("📚 Dosen Document Vault")
-
-    st.caption(
-        "Secure Academic Document Management System"
-    )
+    st.caption("Secure Academic Document Management System")
 
     st.markdown("---")
 
@@ -156,62 +65,90 @@ if not st.session_state.logged_in:
     ):
 
         if password == APP_PASSWORD:
-
             st.session_state.logged_in = True
             st.rerun()
 
         else:
-
-            st.error(
-                "Password salah."
-            )
+            st.error("Password salah.")
 
     st.stop()
-
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 
-st.sidebar.title(
-    "📚 Document Vault"
-)
+st.sidebar.title("📚 Document Vault")
 
 menu = st.sidebar.radio(
     "Menu",
     [
         "🏠 Dashboard",
-        "☁️ Google Drive",
-        "📚 Supabase"
+        "📤 Upload Dokumen",
+        "🔎 Cari Dokumen",
+        "📚 Semua Dokumen"
     ]
 )
 
 st.sidebar.markdown("---")
 
-if st.sidebar.button(
-    "🚪 Logout"
-):
+if st.sidebar.button("🚪 Logout"):
 
     st.session_state.logged_in = False
-    st.session_state.google_credentials = None
-
     st.rerun()
-
 
 # =========================================================
 # HEADER
 # =========================================================
 
-st.title(
-    "📚 Dosen Document Vault"
-)
-
-st.caption(
-    "Google Drive + Supabase"
-)
+st.title("📚 Dosen Document Vault")
+st.caption("Academic Document Management with Supabase")
 
 st.markdown("---")
 
+# =========================================================
+# FUNCTIONS
+# =========================================================
+
+def get_documents():
+
+    try:
+
+        response = (
+            supabase
+            .table("documents")
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        return response.data
+
+    except Exception as e:
+
+        st.error(
+            f"Gagal mengambil data dokumen: {e}"
+        )
+
+        return []
+
+
+def download_document(storage_path):
+
+    try:
+
+        return (
+            supabase.storage
+            .from_(BUCKET_NAME)
+            .download(storage_path)
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Gagal mengambil file: {e}"
+        )
+
+        return None
 
 # =========================================================
 # DASHBOARD
@@ -219,213 +156,395 @@ st.markdown("---")
 
 if menu == "🏠 Dashboard":
 
-    st.subheader("Dashboard")
+    documents = get_documents()
 
-    try:
+    total_documents = len(documents)
 
-        response = (
-            supabase
-            .table("documents")
-            .select("*")
-            .execute()
-        )
+    categories = {
+        doc.get("kategori")
+        for doc in documents
+        if doc.get("kategori")
+    }
 
-        total_documents = len(
-            response.data
-        )
+    years = {
+        doc.get("tahun")
+        for doc in documents
+        if doc.get("tahun")
+    }
 
-    except Exception as e:
-
-        total_documents = 0
-
-        st.warning(
-            f"Supabase belum dapat dibaca: {e}"
-        )
-
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     col1.metric(
-        "📄 Dokumen",
+        "📄 Total Dokumen",
         total_documents
     )
 
-    if st.session_state.google_credentials:
+    col2.metric(
+        "📁 Kategori",
+        len(categories)
+    )
 
-        col2.metric(
-            "☁️ Google Drive",
-            "Terhubung"
+    col3.metric(
+        "📅 Tahun",
+        len(years)
+    )
+
+    st.markdown("---")
+
+    if total_documents == 0:
+
+        st.info(
+            "Belum ada dokumen. "
+            "Gunakan menu Upload Dokumen."
         )
 
     else:
 
-        col2.metric(
-            "☁️ Google Drive",
-            "Belum terhubung"
-        )
+        st.subheader("Dokumen Terbaru")
 
+        for doc in documents[:5]:
 
-# =========================================================
-# GOOGLE DRIVE
-# =========================================================
-
-elif menu == "☁️ Google Drive":
-
-    st.subheader(
-        "☁️ Google Drive"
-    )
-
-    if not st.session_state.google_credentials:
-
-        st.warning(
-            "Google Drive belum terhubung."
-        )
-
-        flow = create_google_flow()
-
-        authorization_url, state = (
-            flow.authorization_url(
-                access_type="offline",
-                prompt="consent",
-                include_granted_scopes="true"
+            st.write(
+                f"📄 **{doc.get('judul', '-')}** "
+                f"— {doc.get('kategori', '-')} "
+                f"({doc.get('tahun', '-')})"
             )
+
+# =========================================================
+# UPLOAD
+# =========================================================
+
+elif menu == "📤 Upload Dokumen":
+
+    st.subheader("📤 Upload Dokumen Baru")
+
+    with st.form("upload_form"):
+
+        judul = st.text_input(
+            "Judul Dokumen *",
+            placeholder="Contoh: Surat Tugas Seminar Penilaian"
         )
 
-        st.link_button(
-            "🔗 Hubungkan Google Drive",
-            authorization_url,
+        kategori = st.selectbox(
+            "Kategori",
+            [
+                "Pengajaran",
+                "Penelitian",
+                "Publikasi",
+                "Kedinasan",
+                "BKD & Kinerja",
+                "Kerja Sama",
+                "Seminar & PPL",
+                "Arsip Pribadi",
+                "Lainnya"
+            ]
+        )
+
+        tahun = st.number_input(
+            "Tahun",
+            min_value=1990,
+            max_value=2100,
+            value=datetime.now().year
+        )
+
+        kata_kunci = st.text_input(
+            "Kata Kunci",
+            placeholder="Contoh: MAPPI, BKD, penelitian"
+        )
+
+        uploaded_file = st.file_uploader(
+            "Pilih Dokumen *",
+            type=[
+                "pdf",
+                "doc",
+                "docx",
+                "xls",
+                "xlsx",
+                "ppt",
+                "pptx",
+                "csv",
+                "txt",
+                "jpg",
+                "jpeg",
+                "png"
+            ]
+        )
+
+        submit = st.form_submit_button(
+            "💾 Simpan Dokumen",
             type="primary",
             use_container_width=True
         )
 
-    else:
+    if submit:
 
-        st.success(
-            "✅ Google Drive berhasil terhubung."
-        )
+        if not judul:
 
-        try:
-
-            credentials = Credentials(
-                **st.session_state.google_credentials
+            st.warning(
+                "Judul dokumen harus diisi."
             )
 
-            drive_service = build(
-                "drive",
-                "v3",
-                credentials=credentials,
-                cache_discovery=False
-            )
+        elif uploaded_file is None:
 
-            about = (
-                drive_service
-                .about()
-                .get(
-                    fields="user"
-                )
-                .execute()
-            )
-
-            user = about.get(
-                "user",
-                {}
-            )
-
-            email = user.get(
-                "emailAddress",
-                ""
-            )
-
-            st.write(
-                "### Akun Google"
-            )
-
-            st.success(
-                email
-            )
-
-            st.markdown("---")
-
-            if GOOGLE_DRIVE_FOLDER_ID:
-
-                st.write(
-                    "### 📁 Folder Dosen Document Vault"
-                )
-
-                try:
-
-                    folder = (
-                        drive_service
-                        .files()
-                        .get(
-                            fileId=GOOGLE_DRIVE_FOLDER_ID,
-                            fields="id,name,mimeType"
-                        )
-                        .execute()
-                    )
-
-                    st.success(
-                        f"Folder ditemukan: "
-                        f"{folder.get('name')}"
-                    )
-
-                except Exception as folder_error:
-
-                    st.warning(
-                        "Google Drive sudah terhubung, "
-                        "tetapi folder belum dapat diakses."
-                    )
-
-                    st.caption(
-                        str(folder_error)
-                    )
-
-        except Exception as e:
-
-            st.error(
-                f"Gagal membaca Google Drive: {e}"
-            )
-
-
-# =========================================================
-# SUPABASE
-# =========================================================
-
-elif menu == "📚 Supabase":
-
-    st.subheader(
-        "📚 Metadata Supabase"
-    )
-
-    try:
-
-        response = (
-            supabase
-            .table("documents")
-            .select("*")
-            .order(
-                "created_at",
-                desc=True
-            )
-            .execute()
-        )
-
-        data = response.data
-
-        if data:
-
-            st.dataframe(
-                data,
-                use_container_width=True
+            st.warning(
+                "Silakan pilih dokumen."
             )
 
         else:
 
-            st.info(
-                "Belum ada dokumen."
+            try:
+
+                file_id = str(uuid.uuid4())
+
+                safe_name = (
+                    uploaded_file.name
+                    .replace(" ", "_")
+                )
+
+                storage_path = (
+                    f"{datetime.now().year}/"
+                    f"{file_id}_{safe_name}"
+                )
+
+                file_bytes = uploaded_file.getvalue()
+
+                content_type = (
+                    uploaded_file.type
+                    or mimetypes.guess_type(
+                        uploaded_file.name
+                    )[0]
+                    or "application/octet-stream"
+                )
+
+                # Upload file to Supabase Storage
+                supabase.storage.from_(
+                    BUCKET_NAME
+                ).upload(
+                    path=storage_path,
+                    file=file_bytes,
+                    file_options={
+                        "content-type": content_type,
+                        "upsert": "false"
+                    }
+                )
+
+                # Save metadata
+                metadata = {
+                    "judul": judul,
+                    "kategori": kategori,
+                    "tahun": int(tahun),
+                    "kata_kunci": kata_kunci,
+                    "nama_file": uploaded_file.name,
+                    "storage_path": storage_path
+                }
+
+                supabase.table(
+                    "documents"
+                ).insert(
+                    metadata
+                ).execute()
+
+                st.success(
+                    "✅ Dokumen berhasil disimpan."
+                )
+
+                st.balloons()
+
+            except Exception as e:
+
+                st.error(
+                    f"Gagal menyimpan dokumen: {e}"
+                )
+
+# =========================================================
+# SEARCH
+# =========================================================
+
+elif menu == "🔎 Cari Dokumen":
+
+    st.subheader("🔎 Cari Dokumen")
+
+    documents = get_documents()
+
+    keyword = st.text_input(
+        "Cari dokumen",
+        placeholder="Contoh: MAPPI, BKD, penelitian rumah"
+    )
+
+    kategori_filter = st.selectbox(
+        "Kategori",
+        [
+            "Semua",
+            "Pengajaran",
+            "Penelitian",
+            "Publikasi",
+            "Kedinasan",
+            "BKD & Kinerja",
+            "Kerja Sama",
+            "Seminar & PPL",
+            "Arsip Pribadi",
+            "Lainnya"
+        ]
+    )
+
+    if keyword:
+
+        keyword_lower = keyword.lower()
+
+        results = []
+
+        for doc in documents:
+
+            searchable = (
+                str(doc.get("judul", ""))
+                + " "
+                + str(doc.get("kategori", ""))
+                + " "
+                + str(doc.get("kata_kunci", ""))
+                + " "
+                + str(doc.get("tahun", ""))
+                + " "
+                + str(doc.get("nama_file", ""))
+            ).lower()
+
+            if keyword_lower in searchable:
+
+                results.append(doc)
+
+    else:
+
+        results = documents
+
+    if kategori_filter != "Semua":
+
+        results = [
+            doc for doc in results
+            if doc.get("kategori") == kategori_filter
+        ]
+
+    st.write(
+        f"**Ditemukan {len(results)} dokumen**"
+    )
+
+    if not results:
+
+        st.info(
+            "Dokumen tidak ditemukan."
+        )
+
+    for doc in results:
+
+        with st.expander(
+            f"📄 {doc.get('judul', '-')}"
+        ):
+
+            st.write(
+                "**Kategori:**",
+                doc.get("kategori", "-")
             )
 
-    except Exception as e:
+            st.write(
+                "**Tahun:**",
+                doc.get("tahun", "-")
+            )
 
-        st.error(
-            f"Gagal mengambil data Supabase: {e}"
+            st.write(
+                "**Kata Kunci:**",
+                doc.get("kata_kunci", "-")
+            )
+
+            st.write(
+                "**Nama File:**",
+                doc.get("nama_file", "-")
+            )
+
+            if st.button(
+                "Siapkan Download",
+                key=f"prepare_{doc['id']}"
+            ):
+
+                file_data = download_document(
+                    doc["storage_path"]
+                )
+
+                if file_data:
+
+                    st.download_button(
+                        "⬇️ Download Dokumen",
+                        data=file_data,
+                        file_name=doc["nama_file"],
+                        key=f"download_{doc['id']}"
+                    )
+
+# =========================================================
+# ALL DOCUMENTS
+# =========================================================
+
+elif menu == "📚 Semua Dokumen":
+
+    st.subheader("📚 Semua Dokumen")
+
+    documents = get_documents()
+
+    if not documents:
+
+        st.info(
+            "Belum ada dokumen."
         )
+
+    else:
+
+        st.write(
+            f"Total: **{len(documents)} dokumen**"
+        )
+
+        for doc in documents:
+
+            with st.expander(
+                f"📄 {doc.get('judul', '-')} "
+                f"({doc.get('tahun', '-')})"
+            ):
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+
+                    st.write(
+                        "**Kategori:**",
+                        doc.get("kategori", "-")
+                    )
+
+                    st.write(
+                        "**Tahun:**",
+                        doc.get("tahun", "-")
+                    )
+
+                with col2:
+
+                    st.write(
+                        "**Kata Kunci:**",
+                        doc.get("kata_kunci", "-")
+                    )
+
+                    st.write(
+                        "**Nama File:**",
+                        doc.get("nama_file", "-")
+                    )
+
+                if st.button(
+                    "Siapkan Download",
+                    key=f"all_prepare_{doc['id']}"
+                ):
+
+                    file_data = download_document(
+                        doc["storage_path"]
+                    )
+
+                    if file_data:
+
+                        st.download_button(
+                            "⬇️ Download Dokumen",
+                            data=file_data,
+                            file_name=doc["nama_file"],
+                            key=f"all_download_{doc['id']}"
+                        )
