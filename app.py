@@ -1,8 +1,12 @@
 import streamlit as st
-import pandas as pd
-import os
-import uuid
+from supabase import create_client
 from datetime import datetime
+import uuid
+import mimetypes
+
+# =====================================================
+# PAGE CONFIG
+# =====================================================
 
 st.set_page_config(
     page_title="Dosen Document Vault",
@@ -10,306 +14,545 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📚 Dosen Document Vault")
-st.caption("Simpan, kelola, dan temukan dokumen dosen dengan cepat.")
+# =====================================================
+# SUPABASE CONNECTION
+# =====================================================
 
-# =========================
-# Folder dan file metadata
-# =========================
-os.makedirs("documents", exist_ok=True)
-os.makedirs("data", exist_ok=True)
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_SECRET_KEY = st.secrets["SUPABASE_SECRET_KEY"]
+APP_PASSWORD = st.secrets["APP_PASSWORD"]
 
-metadata_file = "data/documents.csv"
-
-if not os.path.exists(metadata_file):
-    df = pd.DataFrame(columns=[
-        "id",
-        "judul",
-        "kategori",
-        "tahun",
-        "kata_kunci",
-        "nama_file",
-        "tanggal_upload"
-    ])
-    df.to_csv(metadata_file, index=False)
-
-# =========================
-# Menu sidebar
-# =========================
-menu = st.sidebar.radio(
-    "Menu",
-    [
-        "🏠 Beranda",
-        "📤 Upload Dokumen",
-        "🔎 Cari Dokumen",
-        "📚 Daftar Dokumen"
-    ]
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
 )
 
-# =========================
-# BERANDA
-# =========================
-if menu == "🏠 Beranda":
+BUCKET_NAME = "documents"
 
-    df = pd.read_csv(metadata_file)
 
-    st.subheader("Ringkasan Dokumen")
+# =====================================================
+# LOGIN
+# =====================================================
 
-    col1, col2, col3 = st.columns(3)
+def login():
 
-    col1.metric("Total Dokumen", len(df))
+    st.title("📚 Dosen Document Vault")
+    st.caption("Secure Academic Document Management")
 
-    if len(df) > 0:
-        col2.metric("Kategori", df["kategori"].nunique())
-        col3.metric("Tahun", df["tahun"].nunique())
-    else:
-        col2.metric("Kategori", 0)
-        col3.metric("Tahun", 0)
+    st.markdown("---")
 
-    st.info(
-        "Gunakan menu Upload Dokumen untuk menambahkan arsip baru."
+    st.subheader("🔐 Login")
+
+    password = st.text_input(
+        "Password",
+        type="password",
+        placeholder="Masukkan password"
     )
 
-# =========================
-# UPLOAD DOKUMEN
-# =========================
-elif menu == "📤 Upload Dokumen":
+    if st.button(
+        "Masuk",
+        type="primary",
+        use_container_width=True
+    ):
 
-    st.subheader("📤 Upload Dokumen Baru")
+        if password == APP_PASSWORD:
 
-    judul = st.text_input("Judul Dokumen")
-
-    kategori = st.selectbox(
-        "Kategori",
-        [
-            "Pengajaran",
-            "Penelitian",
-            "Publikasi",
-            "Kedinasan",
-            "BKD & Kinerja",
-            "Kerja Sama",
-            "Seminar & PPL",
-            "Arsip Pribadi",
-            "Lainnya"
-        ]
-    )
-
-    tahun = st.number_input(
-        "Tahun",
-        min_value=2000,
-        max_value=2100,
-        value=datetime.now().year
-    )
-
-    kata_kunci = st.text_input(
-        "Kata Kunci",
-        placeholder="contoh: MAPPI, penilaian, seminar"
-    )
-
-    uploaded_file = st.file_uploader(
-        "Pilih File",
-        type=[
-            "pdf",
-            "doc",
-            "docx",
-            "xls",
-            "xlsx",
-            "ppt",
-            "pptx",
-            "csv",
-            "txt",
-            "jpg",
-            "jpeg",
-            "png"
-        ]
-    )
-
-    if st.button("💾 Simpan Dokumen"):
-
-        if not judul:
-            st.warning("Judul dokumen harus diisi.")
-
-        elif uploaded_file is None:
-            st.warning("Silakan pilih file terlebih dahulu.")
+            st.session_state["login"] = True
+            st.rerun()
 
         else:
 
-            doc_id = str(uuid.uuid4())[:8]
-            nama_file_asli = uploaded_file.name
-            nama_file_simpan = f"{doc_id}_{nama_file_asli}"
+            st.error("Password salah.")
 
-            path_file = os.path.join(
-                "documents",
-                nama_file_simpan
+
+if "login" not in st.session_state:
+    st.session_state["login"] = False
+
+
+if not st.session_state["login"]:
+    login()
+    st.stop()
+
+
+# =====================================================
+# SIDEBAR
+# =====================================================
+
+st.sidebar.title("📚 Document Vault")
+
+menu = st.sidebar.radio(
+    "Menu",
+    [
+        "🏠 Dashboard",
+        "📤 Upload Dokumen",
+        "🔎 Cari Dokumen",
+        "📚 Semua Dokumen"
+    ]
+)
+
+st.sidebar.markdown("---")
+
+if st.sidebar.button("🚪 Logout"):
+
+    st.session_state["login"] = False
+    st.rerun()
+
+
+# =====================================================
+# HEADER
+# =====================================================
+
+st.title("📚 Dosen Document Vault")
+
+st.caption(
+    "Secure Academic Document Management System"
+)
+
+st.markdown("---")
+
+
+# =====================================================
+# FUNCTION GET DOCUMENTS
+# =====================================================
+
+def get_documents():
+
+    try:
+
+        response = (
+            supabase
+            .table("documents")
+            .select("*")
+            .order(
+                "created_at",
+                desc=True
+            )
+            .execute()
+        )
+
+        return response.data
+
+    except Exception as e:
+
+        st.error(
+            f"Gagal mengambil data: {e}"
+        )
+
+        return []
+
+
+# =====================================================
+# DASHBOARD
+# =====================================================
+
+if menu == "🏠 Dashboard":
+
+    st.subheader("Dashboard")
+
+    documents = get_documents()
+
+    total_documents = len(documents)
+
+    categories = set()
+
+    years = set()
+
+    for doc in documents:
+
+        if doc.get("kategori"):
+            categories.add(
+                doc["kategori"]
             )
 
-            with open(path_file, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+        if doc.get("tahun"):
+            years.add(
+                doc["tahun"]
+            )
 
-            df = pd.read_csv(metadata_file)
+    col1, col2, col3 = st.columns(3)
 
-            data_baru = pd.DataFrame([{
-                "id": doc_id,
-                "judul": judul,
-                "kategori": kategori,
-                "tahun": int(tahun),
-                "kata_kunci": kata_kunci,
-                "nama_file": nama_file_simpan,
-                "tanggal_upload": datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
+    col1.metric(
+        "📄 Total Dokumen",
+        total_documents
+    )
+
+    col2.metric(
+        "📁 Kategori",
+        len(categories)
+    )
+
+    col3.metric(
+        "📅 Tahun",
+        len(years)
+    )
+
+    st.markdown("---")
+
+    st.info(
+        "Dokumen sekarang disimpan secara permanen "
+        "di Supabase Storage."
+    )
+
+
+# =====================================================
+# UPLOAD DOCUMENT
+# =====================================================
+
+elif menu == "📤 Upload Dokumen":
+
+    st.subheader("📤 Upload Dokumen")
+
+    with st.form("upload_form"):
+
+        judul = st.text_input(
+            "Judul Dokumen *",
+            placeholder="Contoh: Surat Tugas Seminar Penilaian"
+        )
+
+        kategori = st.selectbox(
+            "Kategori *",
+            [
+                "Pengajaran",
+                "Penelitian",
+                "Publikasi",
+                "Kedinasan",
+                "BKD & Kinerja",
+                "Kerja Sama",
+                "Seminar & PPL",
+                "Arsip Pribadi",
+                "Lainnya"
+            ]
+        )
+
+        tahun = st.number_input(
+            "Tahun",
+            min_value=1990,
+            max_value=2100,
+            value=datetime.now().year
+        )
+
+        kata_kunci = st.text_input(
+            "Kata Kunci",
+            placeholder=(
+                "Contoh: MAPPI, seminar, "
+                "penilaian properti"
+            )
+        )
+
+        uploaded_file = st.file_uploader(
+            "Pilih Dokumen *",
+            type=[
+                "pdf",
+                "doc",
+                "docx",
+                "xls",
+                "xlsx",
+                "ppt",
+                "pptx",
+                "csv",
+                "txt",
+                "jpg",
+                "jpeg",
+                "png"
+            ]
+        )
+
+        submit = st.form_submit_button(
+            "💾 Simpan Dokumen",
+            type="primary",
+            use_container_width=True
+        )
+
+    if submit:
+
+        if not judul:
+
+            st.warning(
+                "Judul dokumen harus diisi."
+            )
+
+        elif uploaded_file is None:
+
+            st.warning(
+                "Silakan pilih dokumen."
+            )
+
+        else:
+
+            try:
+
+                # ---------------------------------
+                # Create unique storage filename
+                # ---------------------------------
+
+                file_id = str(uuid.uuid4())
+
+                safe_name = (
+                    uploaded_file.name
+                    .replace(" ", "_")
                 )
-            }])
 
-            df = pd.concat(
-                [df, data_baru],
-                ignore_index=True
-            )
+                storage_path = (
+                    f"{datetime.now().year}/"
+                    f"{file_id}_{safe_name}"
+                )
 
-            df.to_csv(metadata_file, index=False)
+                file_bytes = (
+                    uploaded_file.getvalue()
+                )
 
-            st.success("✅ Dokumen berhasil disimpan.")
+                content_type = (
+                    uploaded_file.type
+                    or mimetypes.guess_type(
+                        uploaded_file.name
+                    )[0]
+                    or "application/octet-stream"
+                )
 
-# =========================
-# CARI DOKUMEN
-# =========================
+                # ---------------------------------
+                # Upload to Supabase Storage
+                # ---------------------------------
+
+                supabase.storage.from_(
+                    BUCKET_NAME
+                ).upload(
+                    path=storage_path,
+                    file=file_bytes,
+                    file_options={
+                        "content-type": content_type,
+                        "upsert": "false"
+                    }
+                )
+
+                # ---------------------------------
+                # Save metadata
+                # ---------------------------------
+
+                metadata = {
+
+                    "judul": judul,
+
+                    "kategori": kategori,
+
+                    "tahun": int(tahun),
+
+                    "kata_kunci": kata_kunci,
+
+                    "nama_file":
+                        uploaded_file.name,
+
+                    "storage_path":
+                        storage_path
+                }
+
+                supabase.table(
+                    "documents"
+                ).insert(
+                    metadata
+                ).execute()
+
+                st.success(
+                    "✅ Dokumen berhasil "
+                    "disimpan permanen."
+                )
+
+                st.balloons()
+
+            except Exception as e:
+
+                st.error(
+                    f"Gagal menyimpan dokumen: {e}"
+                )
+
+
+# =====================================================
+# SEARCH
+# =====================================================
+
 elif menu == "🔎 Cari Dokumen":
 
     st.subheader("🔎 Cari Dokumen")
 
-    df = pd.read_csv(metadata_file)
+    documents = get_documents()
 
-    if len(df) == 0:
+    keyword = st.text_input(
+        "Cari",
+        placeholder=(
+            "Contoh: MAPPI, BKD, "
+            "machine learning..."
+        )
+    )
 
-        st.info("Belum ada dokumen yang disimpan.")
+    if keyword:
+
+        keyword_lower = keyword.lower()
+
+        results = []
+
+        for doc in documents:
+
+            searchable = (
+                str(doc.get("judul", ""))
+                + " "
+                + str(doc.get("kategori", ""))
+                + " "
+                + str(doc.get("kata_kunci", ""))
+                + " "
+                + str(doc.get("tahun", ""))
+            ).lower()
+
+            if keyword_lower in searchable:
+
+                results.append(doc)
+
+        st.write(
+            f"**Ditemukan "
+            f"{len(results)} dokumen**"
+        )
+
+        for doc in results:
+
+            with st.expander(
+                f"📄 {doc['judul']}"
+            ):
+
+                st.write(
+                    "**Kategori:**",
+                    doc.get("kategori")
+                )
+
+                st.write(
+                    "**Tahun:**",
+                    doc.get("tahun")
+                )
+
+                st.write(
+                    "**Kata Kunci:**",
+                    doc.get("kata_kunci")
+                )
+
+                st.write(
+                    "**File:**",
+                    doc.get("nama_file")
+                )
+
+                try:
+
+                    file_data = (
+                        supabase.storage
+                        .from_(BUCKET_NAME)
+                        .download(
+                            doc["storage_path"]
+                        )
+                    )
+
+                    st.download_button(
+                        "⬇️ Download",
+                        data=file_data,
+                        file_name=doc[
+                            "nama_file"
+                        ],
+                        key=(
+                            f"download_"
+                            f"{doc['id']}"
+                        )
+                    )
+
+                except Exception:
+
+                    st.warning(
+                        "File tidak dapat "
+                        "di-download."
+                    )
 
     else:
 
-        pencarian = st.text_input(
-            "Cari berdasarkan judul atau kata kunci",
-            placeholder="contoh: MAPPI, BKD, penelitian rumah"
+        st.info(
+            "Masukkan kata kunci "
+            "untuk mencari dokumen."
         )
 
-        kategori_filter = st.selectbox(
-            "Filter Kategori",
-            ["Semua"] + sorted(df["kategori"].dropna().unique().tolist())
+
+# =====================================================
+# ALL DOCUMENTS
+# =====================================================
+
+elif menu == "📚 Semua Dokumen":
+
+    st.subheader("📚 Semua Dokumen")
+
+    documents = get_documents()
+
+    if not documents:
+
+        st.info(
+            "Belum ada dokumen."
         )
 
-        tahun_list = sorted(
-            df["tahun"].dropna().astype(int).unique().tolist(),
-            reverse=True
+    else:
+
+        st.write(
+            f"Total: **{len(documents)} dokumen**"
         )
 
-        tahun_filter = st.selectbox(
-            "Filter Tahun",
-            ["Semua"] + tahun_list
-        )
+        for doc in documents:
 
-        hasil = df.copy()
+            with st.expander(
+                f"📄 {doc['judul']} "
+                f"({doc.get('tahun', '-')})"
+            ):
 
-        if pencarian:
+                col1, col2 = st.columns(2)
 
-            pencarian_lower = pencarian.lower()
-
-            hasil = hasil[
-                hasil["judul"].fillna("").str.lower().str.contains(
-                    pencarian_lower,
-                    regex=False
-                )
-                |
-                hasil["kata_kunci"].fillna("").str.lower().str.contains(
-                    pencarian_lower,
-                    regex=False
-                )
-            ]
-
-        if kategori_filter != "Semua":
-            hasil = hasil[
-                hasil["kategori"] == kategori_filter
-            ]
-
-        if tahun_filter != "Semua":
-            hasil = hasil[
-                hasil["tahun"].astype(int) == int(tahun_filter)
-            ]
-
-        st.write(f"**Ditemukan {len(hasil)} dokumen**")
-
-        if len(hasil) == 0:
-
-            st.warning("Dokumen tidak ditemukan.")
-
-        else:
-
-            for _, row in hasil.iterrows():
-
-                with st.expander(
-                    f"📄 {row['judul']} — {row['tahun']}"
-                ):
+                with col1:
 
                     st.write(
                         "**Kategori:**",
-                        row["kategori"]
+                        doc.get("kategori")
                     )
+
+                    st.write(
+                        "**Tahun:**",
+                        doc.get("tahun")
+                    )
+
+                with col2:
 
                     st.write(
                         "**Kata Kunci:**",
-                        row["kata_kunci"]
+                        doc.get("kata_kunci")
                     )
 
                     st.write(
-                        "**Tanggal Upload:**",
-                        row["tanggal_upload"]
+                        "**Nama File:**",
+                        doc.get("nama_file")
                     )
 
-                    path_file = os.path.join(
-                        "documents",
-                        row["nama_file"]
-                    )
+                try:
 
-                    if os.path.exists(path_file):
-
-                        with open(path_file, "rb") as f:
-
-                            st.download_button(
-                                "⬇️ Download Dokumen",
-                                data=f.read(),
-                                file_name=row["nama_file"].split(
-                                    "_",
-                                    1
-                                )[-1],
-                                key=f"download_{row['id']}"
-                            )
-
-                    else:
-
-                        st.error(
-                            "File tidak ditemukan di penyimpanan."
+                    file_data = (
+                        supabase.storage
+                        .from_(BUCKET_NAME)
+                        .download(
+                            doc["storage_path"]
                         )
+                    )
 
-# =========================
-# DAFTAR DOKUMEN
-# =========================
-elif menu == "📚 Daftar Dokumen":
+                    st.download_button(
+                        "⬇️ Download Dokumen",
+                        data=file_data,
+                        file_name=doc[
+                            "nama_file"
+                        ],
+                        key=(
+                            f"all_download_"
+                            f"{doc['id']}"
+                        )
+                    )
 
-    st.subheader("📚 Daftar Dokumen")
+                except Exception:
 
-    df = pd.read_csv(metadata_file)
-
-    if len(df) == 0:
-
-        st.info("Belum ada dokumen yang disimpan.")
-
-    else:
-
-        st.dataframe(
-            df[
-                [
-                    "judul",
-                    "kategori",
-                    "tahun",
-                    "kata_kunci",
-                    "tanggal_upload"
-                ]
-            ],
-            use_container_width=True
-        )
+                    st.warning(
+                        "File tidak dapat "
+                        "di-download."
+                    )
