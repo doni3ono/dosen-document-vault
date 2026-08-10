@@ -122,13 +122,19 @@ if not st.session_state.logged_in:
 if "code" in st.query_params:
 
     try:
-
-        code = st.query_params["code"]
+        code = st.query_params.get("code")
 
         flow = create_google_flow()
 
+        # Penting: gunakan authorization_response lengkap
+        authorization_response = (
+            GOOGLE_REDIRECT_URI
+            + "?code="
+            + code
+        )
+
         flow.fetch_token(
-            code=code
+            authorization_response=authorization_response
         )
 
         credentials = flow.credentials
@@ -142,19 +148,18 @@ if "code" in st.query_params:
             "scopes": credentials.scopes
         }
 
+        # Bersihkan parameter OAuth setelah credential tersimpan
         st.query_params.clear()
-
-        st.success(
-            "✅ Google Drive berhasil dihubungkan."
-        )
 
         st.rerun()
 
     except Exception as e:
 
         st.error(
-            f"Gagal menghubungkan Google Drive: {e}"
+            f"Google OAuth callback gagal: {e}"
         )
+
+        st.stop()
 
 
 # =========================================================
@@ -254,12 +259,11 @@ elif menu == "☁️ Google Drive":
 
         flow = create_google_flow()
 
-        authorization_url, state = (
-            flow.authorization_url(
-                access_type="offline",
-                include_granted_scopes="true",
-                prompt="consent"
-            )
+        authorization_url, state = flow.authorization_url(
+    access_type="offline",
+    include_granted_scopes="true",
+    prompt="consent"
+)
         )
 
         st.link_button(
